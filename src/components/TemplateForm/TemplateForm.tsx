@@ -13,6 +13,7 @@ interface TemplateFormProps {
 function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
   const [templateName, setTemplateName] = useState("Template 01");
   const [gradingScale, setGradingScale] = useState("0-5");
+
   const [gradeCount, setGradeCount] = useState(5);
   const [gradeCountInput, setGradeCountInput] = useState("5");
   const [gradeCountError, setGradeCountError] = useState(false);
@@ -72,7 +73,6 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
         <input
           id="gradeCount"
           type="text"
-          inputMode="numeric"
           value={gradeCountInput}
           onChange={(event) => {
             const value = event.target.value;
@@ -81,21 +81,23 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
 
             const numberValue = Number(value);
 
-            if (
+            const isInvalid =
               value === "" ||
+              value === "-" ||
               Number.isNaN(numberValue) ||
               numberValue < 1 ||
-              numberValue > 5
-            ) {
-              setGradeCountError(true);
-              return;
-            }
+              numberValue > 5;
 
-            setGradeCountError(false);
-            setGradeCount(numberValue);
+            setGradeCountError(isInvalid);
+
+            if (!isInvalid) {
+              setGradeCount(numberValue);
+            }
           }}
           style={{
-            border: gradeCountError ? "2px solid red" : undefined,
+            border: gradeCountError
+              ? "2px solid red"
+              : "1px solid black",
           }}
         />
 
@@ -104,7 +106,6 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
             Number of grades must be between 1 and 5.
           </p>
         )}
-        
       </div>
 
       <button type="button" onClick={handleCreateTemplate}>

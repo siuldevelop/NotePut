@@ -12,6 +12,10 @@ function GradeTable({
   gradingScale,
   gradeCount,
 }: GradeTableProps) {
+  const [gradeWeights, setGradeWeights] = useState<number[]>(
+    Array(gradeCount).fill(100 / gradeCount)
+  );
+  
   const [students, setStudents] = useState<Student[]>([
     {
       id: 1,
@@ -80,7 +84,28 @@ function GradeTable({
             <th>Student</th>
 
             {Array.from({ length: gradeCount }, (_, index) => (
-              <th key={index}>Grade {index + 1}</th>
+              <th key={index}>
+                <div>
+                  <div>Grade {index + 1}</div>
+
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={gradeWeights[index] === 0 ? "" : gradeWeights[index]}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => {
+                    const newWeights = [...gradeWeights];
+
+                    newWeights[index] = Number(event.target.value);
+
+                    setGradeWeights(newWeights);
+                  }}
+                />
+
+                  <span>%</span>
+                </div>
+              </th>
             ))}
 
             <th>Average</th>

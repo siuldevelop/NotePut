@@ -71,13 +71,13 @@ describe("getAcademicStatus", () => {
 
   it("returns the correct status for the 0-100 scale", () => {
     expect(getAcademicStatus(70, "0-100")).toBe("passing");
-    expect(getAcademicStatus(60, "0-100")).toBe("at-risk");
-    expect(getAcademicStatus(59, "0-100")).toBe("failing");
+    expect(getAcademicStatus(50, "0-100")).toBe("at-risk");
+    expect(getAcademicStatus(49, "0-100")).toBe("failing");
   });
 
   it("returns the correct status for the 0-1 scale", () => {
     expect(getAcademicStatus(0.7, "0-1")).toBe("passing");
-    expect(getAcademicStatus(0.6, "0-1")).toBe("at-risk");
-    expect(getAcademicStatus(0.5, "0-1")).toBe("failing");
+    expect(getAcademicStatus(0.5, "0-1")).toBe("at-risk");
+    expect(getAcademicStatus(0.49, "0-1")).toBe("failing");
   });
 });

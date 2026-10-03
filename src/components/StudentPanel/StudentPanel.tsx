@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateSimpleAverage,
   getAcademicStatus,
@@ -6,6 +6,7 @@ import {
 } from "../../utils/gradeCalculations";
 import type { Translator } from "../../utils/i18n";
 import type { SavedTemplate } from "../../types/Template";
+import Icon from "../Icon/Icon";
 
 interface PersonalStudent {
   id: number;
@@ -13,7 +14,6 @@ interface PersonalStudent {
   className: string;
   gradingScale: string;
   grades: (number | null)[];
-  notes: string;
   isTeacherStudent?: boolean;
   templateId?: string;
   sourceStudentId?: number;
@@ -22,23 +22,20 @@ interface PersonalStudent {
 interface StudentPanelProps {
   t: Translator;
   templates: SavedTemplate[];
+  onUpdateTeacherStudentGrades: (
+    templateId: string,
+    studentId: number,
+    grades: (number | null)[]
+  ) => void;
   onDeleteTeacherStudent: (
     templateId: string,
     studentId: number,
     studentName: string
   ) => void;
+  focusSearchRequest: number;
 }
 
 const PERSONAL_STUDENTS_KEY = "noteput-personal-students";
-
-const createStudent = (id: number): PersonalStudent => ({
-  id,
-  name: "",
-  className: "",
-  gradingScale: "0-5",
-  grades: Array(3).fill(null),
-  notes: "",
-});
 
 const readPersonalStudents = (): PersonalStudent[] => {
   try {
@@ -62,7 +59,13 @@ const readPersonalStudents = (): PersonalStudent[] => {
   }
 };
 
-function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProps) {
+function StudentPanel({
+  t,
+  templates,
+  onUpdateTeacherStudentGrades,
+  onDeleteTeacherStudent,
+  focusSearchRequest,
+}: StudentPanelProps) {
   const [students, setStudents] = useState<PersonalStudent[]>(
     readPersonalStudents
   );
@@ -71,6 +74,13 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
   );
   const [search, setSearch] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (focusSearchRequest > 0) {
+      searchInputRef.current?.focus();
+    }
+  }, [focusSearchRequest]);
 
   const teacherStudents = useMemo(
     () =>
@@ -81,7 +91,6 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
           className: template.name,
           gradingScale: template.gradingScale,
           grades: student.grades,
-          notes: "",
           isTeacherStudent: true,
           templateId: template.id,
           sourceStudentId: student.id,
@@ -111,8 +120,15 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
       )
     );
 
-  const getStatus = (student: PersonalStudent) =>
-    getAcademicStatus(getAverage(student), student.gradingScale);
+  const getStatus = (student: PersonalStudent) => {
+    const hasCompleteGrades =
+      student.grades.length > 0 &&
+      student.grades.every((grade) => grade !== null);
+
+    return hasCompleteGrades
+      ? getAcademicStatus(getAverage(student), student.gradingScale)
+      : "pending";
+  };
 
   const getStatusLabel = (student: PersonalStudent) => {
     const status = getStatus(student);
@@ -120,41 +136,67 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
       ? t("passing")
       : status === "at-risk"
       ? t("atRisk")
+      : status === "pending"
+      ? t("pending")
       : t("failing");
   };
 
-  const filteredStudents = useMemo(
+  const getStudentGroupKey = (student: PersonalStudent) =>
+    student.name.trim().toLowerCase() || `student-${student.id}`;
+
+  const studentGroups = useMemo(() => {
+    const groups = new Map<string, PersonalStudent[]>();
+
+    directoryStudents.forEach((student) => {
+      const key = getStudentGroupKey(student);
+      groups.set(key, [...(groups.get(key) ?? []), student]);
+    });
+
+    return Array.from(groups.values());
+  }, [directoryStudents]);
+
+  const selectedStudentGroup = selectedStudent
+    ? studentGroups.find((group) =>
+        group.some((student) => student.id === selectedStudent.id)
+      ) ?? []
+    : [];
+
+  const getGroupAverage = (group: PersonalStudent[]) =>
+    group.length
+      ? group.reduce((total, student) => total + getAverage(student), 0) /
+        group.length
+      : 0;
+
+  const getGroupStatus = (group: PersonalStudent[]) => {
+    const statuses = group.map(getStatus);
+    if (statuses.includes("failing")) return "failing" as const;
+    if (statuses.includes("at-risk")) return "at-risk" as const;
+    if (statuses.includes("pending")) return "pending" as const;
+    return "passing" as const;
+  };
+
+  const filteredStudentGroups = useMemo(
     () =>
-      directoryStudents.filter((student) =>
-        `${student.name} ${student.className}`
-          .toLowerCase()
-          .includes(search.toLowerCase())
+      studentGroups.filter((group) =>
+        group.some((student) =>
+          `${student.name} ${student.className}`
+            .toLowerCase()
+            .includes(search.toLowerCase())
+        )
       ),
-    [directoryStudents, search]
+    [search, studentGroups]
   );
 
-  const averagePerformance = directoryStudents.length
-    ? directoryStudents.reduce((total, student) => total + getAverage(student), 0) /
-      directoryStudents.length
+  const averagePerformance = studentGroups.length
+    ? studentGroups.reduce((total, group) => total + getGroupAverage(group), 0) /
+      studentGroups.length
     : 0;
-  const studentsNeedingAttention = directoryStudents.filter(
-    (student) => getStatus(student) !== "passing"
+  const studentsNeedingAttention = studentGroups.filter(
+    (group) => getGroupStatus(group) === "failing"
   ).length;
   const classCount = new Set(
     directoryStudents.map((student) => student.className).filter(Boolean)
   ).size;
-
-  const addStudent = () => {
-    const nextId = students.reduce(
-      (highestId, student) => Math.max(highestId, student.id),
-      0
-    ) + 1;
-    const newStudent = createStudent(nextId);
-
-    setStudents((currentStudents) => [...currentStudents, newStudent]);
-    setSelectedStudentId(nextId);
-    setSaveMessage("");
-  };
 
   const updateSelectedStudent = (changes: Partial<PersonalStudent>) => {
     if (selectedStudentId === null || selectedStudent?.isTeacherStudent) return;
@@ -172,6 +214,20 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
 
     const grades = [...selectedStudent.grades];
     grades[index] = value === "" ? null : Number(value);
+
+    if (
+      selectedStudent.isTeacherStudent &&
+      selectedStudent.templateId &&
+      selectedStudent.sourceStudentId !== undefined
+    ) {
+      onUpdateTeacherStudentGrades(
+        selectedStudent.templateId,
+        selectedStudent.sourceStudentId,
+        grades
+      );
+      return;
+    }
+
     updateSelectedStudent({ grades });
   };
 
@@ -232,7 +288,6 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
         .join(", ")}`,
       `${t("average")}: ${getAverage(selectedStudent).toFixed(2)}`,
       `${t("academicStatus")}: ${getStatusLabel(selectedStudent)}`,
-      `${t("notes")}: ${selectedStudent.notes || t("none")}`,
     ].join("\n");
 
     try {
@@ -257,13 +312,10 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
           <h1>{t("yourStudents")}</h1>
           <p>{t("studentDirectorySubtitle")}</p>
         </div>
-        <button className="button button-primary" type="button" onClick={addStudent}>
-          + {t("addPersonalStudent")}
-        </button>
       </div>
 
       <div className="student-directory-stats">
-        <article><small>{t("totalStudents")}</small><strong>{students.length}</strong><span>{t("acrossClasses", { count: classCount })}</span></article>
+        <article><small>{t("totalStudents")}</small><strong>{studentGroups.length}</strong><span>{t("acrossClasses", { count: classCount })}</span></article>
         <article><small>{t("averagePerformance")}</small><strong>{averagePerformance.toFixed(1)}</strong><span>{t("outOfScale", { scale: selectedStudent?.gradingScale === "0-100" ? "100" : selectedStudent?.gradingScale === "0-1" ? "1" : "5.0" })}</span></article>
         <article className="student-stat-warning"><small>{t("needsAttention")}</small><strong>{studentsNeedingAttention}</strong><span>{t("reviewRecommended")}</span></article>
       </div>
@@ -272,20 +324,21 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
         <aside className="personal-student-list">
           <div className="personal-student-list-heading">
             <div><h2>{t("allStudents")}</h2><p>{t("reviewIndividualProgress")}</p></div>
-            <label className="student-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("searchStudents")} /></label>
+            <label className="student-search"><span><Icon name="search" size={16} /></span><input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("searchStudents")} /></label>
           </div>
-          {filteredStudents.map((student) => {
-            const status = getStatus(student);
+          {filteredStudentGroups.map((group) => {
+            const student = group[0];
+            const status = getGroupStatus(group);
             return (
-              <button className={`personal-student-row ${student.id === selectedStudent?.id ? "selected" : ""}`} type="button" key={student.id} onClick={() => setSelectedStudentId(student.id)}>
+              <button className={`personal-student-row ${group.some((item) => item.id === selectedStudent?.id) ? "selected" : ""}`} type="button" key={getStudentGroupKey(student)} onClick={() => setSelectedStudentId(student.id)}>
                 <span className="personal-student-avatar">{student.name.slice(0, 2).toUpperCase() || "ST"}</span>
-                <span className="personal-student-info"><strong>{student.name || t("student")}</strong><small>{student.className || t("className")}</small></span>
-                <span className="personal-student-average"><strong>{getAverage(student).toFixed(1)}</strong><small>{t("average")}</small></span>
-                <span className={`status-pill status-${status}`}>{getStatusLabel(student)}</span>
+                <span className="personal-student-info"><strong>{student.name || t("student")}</strong><small>{group.length} {t("courses")}</small></span>
+                <span className="personal-student-average"><strong>{getGroupAverage(group).toFixed(1)}</strong><small>{t("average")}</small></span>
+                <span className={`status-pill status-${status}`}>{status === "passing" ? t("passing") : status === "at-risk" ? t("atRisk") : status === "pending" ? t("pending") : t("failing")}</span>
               </button>
             );
           })}
-          {filteredStudents.length === 0 && <p className="student-list-empty">{t("noPersonalStudents")}</p>}
+          {filteredStudentGroups.length === 0 && <p className="student-list-empty">{t("noPersonalStudents")}</p>}
         </aside>
 
         <article className="personal-student-editor">
@@ -295,6 +348,18 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
                 <div><p className="student-directory-eyebrow">{t("gradeCalculator")}</p><h2>{selectedStudent.name || t("student")}</h2><p>{selectedStudent.className || t("className")}</p></div>
                 <span className="personal-student-avatar large">{selectedStudent.name.slice(0, 2).toUpperCase() || "ST"}</span>
               </div>
+              {selectedStudentGroup.length > 1 && (
+                <div className="student-course-switcher">
+                  <span>{t("linkedCourses")}</span>
+                  <div>
+                    {selectedStudentGroup.map((course) => (
+                      <button className={course.id === selectedStudent.id ? "active" : ""} type="button" key={course.id} onClick={() => setSelectedStudentId(course.id)}>
+                        {course.className}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="personal-student-fields">
                 <label>{t("studentName")}<input disabled={selectedStudent.isTeacherStudent} value={selectedStudent.name} onChange={(event) => updateSelectedStudent({ name: event.target.value })} placeholder={t("student")} /></label>
                 <label>{t("className")}<input disabled={selectedStudent.isTeacherStudent} value={selectedStudent.className} onChange={(event) => updateSelectedStudent({ className: event.target.value })} placeholder={t("classPlaceholder")} /></label>
@@ -304,17 +369,16 @@ function StudentPanel({ t, templates, onDeleteTeacherStudent }: StudentPanelProp
               <div className="personal-grade-grid">
                 {selectedStudent.grades.map((grade, index) => {
                   const invalid = !isGradeValid(grade, selectedStudent.gradingScale);
-                  return <label key={index}>{t("grade", { number: index + 1 })}<input disabled={selectedStudent.isTeacherStudent} type="number" min="0" max={gradeMaximum} step="0.01" value={grade ?? ""} onChange={(event) => updateGrade(index, event.target.value)} aria-invalid={invalid} /></label>;
+                  return <label key={index}>{t("grade", { number: index + 1 })}<input type="number" min="0" max={gradeMaximum} step="0.01" value={grade ?? ""} onChange={(event) => updateGrade(index, event.target.value)} aria-invalid={invalid} /></label>;
                 })}
               </div>
               <div className="personal-average-box"><small>{t("calculatedAverage")}</small><strong>{getAverage(selectedStudent).toFixed(1)}</strong><span>{t("outOfScale", { scale: gradeMaximum })}</span></div>
               <div className="personal-status-row"><span>{t("status")}</span><span className={`status-pill status-${getStatus(selectedStudent)}`}>{getStatusLabel(selectedStudent)}</span></div>
-              <label className="personal-notes">{t("notes")}<textarea disabled={selectedStudent.isTeacherStudent} rows={3} value={selectedStudent.notes} onChange={(event) => updateSelectedStudent({ notes: event.target.value })} placeholder={t("notesPlaceholder")} /></label>
               <div className="personal-student-actions"><button className="button button-primary" type="button" disabled={selectedStudent.isTeacherStudent} onClick={saveSelectedStudent}>{t("saveStudentGrades")}</button><button className="button button-secondary" type="button" onClick={copySummary}>{t("copySummary")}</button><button className="button button-danger" type="button" onClick={deleteSelectedStudent}>{t("deleteStudent")}</button></div>
               {saveMessage && <p className="success-message">{saveMessage}</p>}
             </>
           ) : (
-            <div className="student-editor-empty"><h2>{t("noPersonalStudents")}</h2><p>{t("createPersonalStudent")}</p><button className="button button-primary" type="button" onClick={addStudent}>{t("addPersonalStudent")}</button></div>
+            <div className="student-editor-empty"><h2>{t("noPersonalStudents")}</h2><p>{t("studentDirectorySubtitle")}</p></div>
           )}
         </article>
       </div>

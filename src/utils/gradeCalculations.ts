@@ -78,13 +78,13 @@ export const getAcademicStatus = (
 
   if (gradingScale === "0-100") {
     if (average >= 70) return "passing";
-    if (average >= 60) return "at-risk";
+    if (average >= 50) return "at-risk";
     return "failing";
   }
 
   if (gradingScale === "0-1") {
     if (average >= 0.7) return "passing";
-    if (average >= 0.6) return "at-risk";
+    if (average >= 0.5) return "at-risk";
     return "failing";
   }
 

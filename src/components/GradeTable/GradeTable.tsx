@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import * as XLSX from "xlsx";
 import type { Student } from "../../types/Student";
 import type { SavedTemplate } from "../../types/Template";
@@ -8,6 +8,7 @@ import {
   isGradeValid,
 } from "../../utils/gradeCalculations";
 import type { Translator } from "../../utils/i18n";
+import Icon from "../Icon/Icon";
 
 interface GradeTableProps {
   templateId: string;
@@ -39,6 +40,8 @@ function GradeTable({
   const [gradeWeights, setGradeWeights] = useState<number[]>(
     initialGradeWeights
   );
+  const [editableTemplateName, setEditableTemplateName] = useState(templateName);
+  const templateNameInputRef = useRef<HTMLInputElement>(null);
   
   const [students, setStudents] = useState<Student[]>(initialStudents);
 
@@ -51,7 +54,7 @@ function GradeTable({
     initialAttendance
   );
   const [studentFilter, setStudentFilter] = useState<
-    "all" | "passing" | "at-risk" | "failing"
+    "all" | "passing" | "at-risk" | "failing" | "pending"
   >( "all");
 
   const addStudent = () => {
@@ -119,7 +122,7 @@ function GradeTable({
 
     XLSX.writeFile(
       workbook,
-      `${templateName}.xlsx`
+      `${editableTemplateName}.xlsx`
     );
   };
 
@@ -252,7 +255,7 @@ function GradeTable({
   const getCurrentTemplate = useCallback(
     (): SavedTemplate => ({
       id: templateId,
-      name: templateName,
+      name: editableTemplateName,
       gradingScale,
       gradeCount,
       gradeWeights,
@@ -267,7 +270,7 @@ function GradeTable({
       showAttendance,
       students,
       templateId,
-      templateName,
+      editableTemplateName,
       gradingScale,
     ]
   );
@@ -287,18 +290,27 @@ function GradeTable({
   };
 
   const getStatusLabel = (status: string) => {
+    if (status === "pending") return t("pending");
     if (status === "passing") return t("satisfactory");
     if (status === "at-risk") return t("atRisk");
     return t("insufficient");
   };
 
-  const studentStatuses = students.map((student) => ({
-    student,
-    status: getAcademicStatus(
-      calculateWeightedAverage(student.grades, gradeWeights),
-      gradingScale
-    ),
-  }));
+  const studentStatuses = students.map((student) => {
+    const hasCompleteGrades =
+      student.grades.length > 0 &&
+      student.grades.every((grade) => grade !== null);
+
+    return {
+      student,
+      status: hasCompleteGrades
+        ? getAcademicStatus(
+            calculateWeightedAverage(student.grades, gradeWeights),
+            gradingScale
+          )
+        : "pending",
+    };
+  });
 
   const filteredStudents = studentStatuses
     .filter(({ status }) => studentFilter === "all" || status === studentFilter)
@@ -308,6 +320,7 @@ function GradeTable({
     passing: studentStatuses.filter(({ status }) => status === "passing").length,
     atRisk: studentStatuses.filter(({ status }) => status === "at-risk").length,
     failing: studentStatuses.filter(({ status }) => status === "failing").length,
+    pending: studentStatuses.filter(({ status }) => status === "pending").length,
   };
 
   const updateGrade = (
@@ -337,21 +350,42 @@ function GradeTable({
     <section className="grade-table-section panel">
       <div className="grade-sheet-heading">
         <div>
-          <h2>{templateName}</h2>
+          <div className="template-name-editor">
+            <input
+              ref={templateNameInputRef}
+              className="template-name-input"
+              type="text"
+              value={editableTemplateName}
+              onChange={(event) => setEditableTemplateName(event.target.value)}
+              aria-label={t("templateName")}
+            />
+            <button
+              className="template-name-edit"
+              type="button"
+              onClick={() => templateNameInputRef.current?.focus()}
+              aria-label={t("edit")}
+              title={t("edit")}
+            >
+              <Icon name="edit" size={17} />
+            </button>
+          </div>
           <p>{t("editableGradeSheet")} · {t("lastSaved")}</p>
         </div>
 
         <div className="grade-sheet-actions">
           <button className="button button-secondary" type="button" onClick={() => onBackToTemplate(getCurrentTemplate())}>
+            <Icon name="arrow-left" size={16} />
             {t("back")}
           </button>
           <button className="button button-secondary" type="button" onClick={() => setShowAttendance(!showAttendance)}>
             {showAttendance ? t("attendance") : t("addAttendance")}
           </button>
           <button className="button button-secondary" type="button" onClick={exportToExcel} disabled={!isWeightTotalValid || hasInvalidWeight}>
+            <Icon name="download" size={16} />
             {t("export")}
           </button>
           <button className="button button-primary" type="button" onClick={saveTemplateLocally}>
+            <Icon name="save" size={16} />
             {t("saveChanges")}
           </button>
         </div>
@@ -371,10 +405,13 @@ function GradeTable({
           <button className={studentFilter === "failing" ? "active" : ""} type="button" onClick={() => setStudentFilter("failing")}>
             {t("insufficient")} <span>{statusCounts.failing}</span>
           </button>
+          <button className={studentFilter === "pending" ? "active" : ""} type="button" onClick={() => setStudentFilter("pending")}>
+            {t("pending")} <span>{statusCounts.pending}</span>
+          </button>
         </div>
 
         <div className="import-control">
-          <label htmlFor="excelImport">{t("import")}</label>
+          <label htmlFor="excelImport"><Icon name="upload" size={16} /> {t("import")}</label>
           <input id="excelImport" type="file" accept=".xlsx,.xls" onChange={importFromExcel} />
         </div>
       </div>
@@ -460,7 +497,12 @@ function GradeTable({
               gradeWeights
             );
 
-            const status = getAcademicStatus(average, gradingScale);
+            const hasCompleteGrades =
+              student.grades.length > 0 &&
+              student.grades.every((grade) => grade !== null);
+            const status = hasCompleteGrades
+              ? getAcademicStatus(average, gradingScale)
+              : "pending";
 
             return (
               <tr key={student.id}>
@@ -482,25 +524,18 @@ function GradeTable({
                         )
                       );
                     }}
-                    style={{
-                      backgroundColor:
-                        status === "passing"
-                          ? "#15803d"
-                          : status === "at-risk"
-                          ? "#a16207"
-                          : "#b91c1c",
-                      color: "#ffffff",
-                    }}
                   />
 
                   <button
-                    className="button button-danger"
+                    className="student-delete-button"
                     type="button"
+                    aria-label={`${t("delete")} ${student.name}`}
+                    title={t("delete")}
                     onClick={() =>
                       removeStudent(student.id, student.name)
                     }
                   >
-                    {t("delete")}
+                    <Icon name="trash" size={17} />
                   </button>
                 </td>
 
@@ -512,7 +547,7 @@ function GradeTable({
                   return (
                     <td key={index}>
                     <input
-                      className="grade-input"
+                      className={`grade-input ${isInvalidGrade ? "invalid" : ""}`}
                       type="number"
                       value={grade ?? ""}
                       onFocus={(event) => event.target.select()}
@@ -525,21 +560,10 @@ function GradeTable({
                           value === "" ? null : Number(value)
                         );
                       }}
-                      style={{
-                        border: isInvalidGrade
-                          ? "3px solid #8f4a4a"
-                          : "1px solid black",
-
-                        borderRadius: "12px",
-
-                        boxShadow: isInvalidGrade
-                          ? "0 0 3px #8f4a4a"
-                          : "none",
-                      }}
                     />
 
                       {isInvalidGrade && (
-                        <small style={{ color: "#8f4a4a" }}>
+                        <small>
                           {t("invalidGrade")}
                         </small>
                       )}
@@ -585,6 +609,7 @@ function GradeTable({
           })}
         </span>
         <button className="button button-secondary" type="button" onClick={addStudent}>
+          <Icon name="plus" size={16} />
           {t("addStudent")}
         </button>
       </div>

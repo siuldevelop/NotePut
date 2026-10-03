@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Fondo Verde Esmeralda -->
+  <rect width="512" height="512" rx="128" fill="#1C6B5E" />
+  
+  <!-- Libro Abierto (Líneas Blancas Simplificadas) -->
+  <g stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Pistas del Libro -->
+    <path d="M 120,380 C 180,360 230,370 256,390 C 282,370 332,360 392,380 L 392,160 C 332,140 282,150 256,170 C 230,150 180,140 120,160 Z" />
+    <!-- Lomo Central -->
+    <line x1="256" y1="170" x2="256" y2="390" />
+  </g>
+</svg>

@@ -3,9 +3,11 @@ import {
   calculateWeightedAverage,
 } from "../../utils/gradeCalculations";
 import type { Translator } from "../../utils/i18n";
+import Icon from "../Icon/Icon";
 
 interface ProfessorPanelProps {
   templates: SavedTemplate[];
+  welcomeMessage: string;
   onOpenTemplate: (template: SavedTemplate) => void;
   onCreateTemplate: () => void;
   onDeleteTemplate: (template: SavedTemplate) => void;
@@ -14,6 +16,7 @@ interface ProfessorPanelProps {
 
 function ProfessorPanel({
   templates,
+  welcomeMessage,
   onOpenTemplate,
   onCreateTemplate,
   onDeleteTemplate,
@@ -38,6 +41,7 @@ function ProfessorPanel({
     <section className="professor-panel">
       <div className="professor-panel-heading">
         <div>
+          <p className="professor-panel-welcome">{welcomeMessage}</p>
           <p className="dashboard-date">{t("professorPanel")}</p>
           <h1>{t("myTemplates")}</h1>
           <p>{t("pickUpWhereLeftOff")}</p>
@@ -50,8 +54,16 @@ function ProfessorPanel({
       <div className="template-gallery-grid">
         {templates.map((template) => (
           <article className="template-gallery-card" key={template.id}>
-            <button type="button" onClick={() => onOpenTemplate(template)}>
-              <span className="recent-icon">▤</span>
+            <button
+              className="template-card-edit"
+              type="button"
+              aria-label={`${t("edit")} ${template.name}`}
+              onClick={() => onOpenTemplate(template)}
+            >
+              <Icon name="edit" size={20} />
+            </button>
+            <button className="template-card-open" type="button" onClick={() => onOpenTemplate(template)}>
+              <span className="recent-icon"><Icon name="template" /></span>
               <strong>{template.name}</strong>
               <small>{t("updatedRecently")}</small>
               <span>
@@ -65,14 +77,14 @@ function ProfessorPanel({
               aria-label={`${t("delete")} ${template.name}`}
               onClick={() => onDeleteTemplate(template)}
             >
-              <span className="trash-icon" aria-hidden="true">🗑</span>
+              <span className="trash-icon" aria-hidden="true"><Icon name="trash" size={15} /></span>
               <span>{t("delete")}</span>
             </button>
           </article>
         ))}
 
         <button className="create-card" type="button" onClick={onCreateTemplate}>
-          <span>＋</span>
+          <span><Icon name="plus" size={26} /></span>
           <strong>{t("createBlankTemplate")}</strong>
           <small>{t("startBlankGradeSheet")}</small>
         </button>

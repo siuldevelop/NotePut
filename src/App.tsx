@@ -4,6 +4,8 @@ import TemplateForm from "./components/TemplateForm/TemplateForm";
 import GradeTable from "./components/GradeTable/GradeTable";
 import StudentPanel from "./components/StudentPanel/StudentPanel";
 import ProfessorPanel from "./components/ProfessorPanel/ProfessorPanel";
+import Icon from "./components/Icon/Icon";
+import notePutIcon from "./assets/icons/icon-svg.svg";
 import type { SavedTemplate, TemplateMetadata } from "./types/Template";
 import type { Student } from "./types/Student";
 import {
@@ -19,6 +21,7 @@ const SAVED_TEMPLATES_KEY = "noteput-saved-templates";
 const LEGACY_SAVED_TEMPLATE_KEY = "noteput-saved-template";
 const LANGUAGE_KEY = "noteput-language";
 const THEME_KEY = "noteput-theme";
+const DISMISSED_NOTIFICATIONS_KEY = "noteput-dismissed-notifications";
 
 const createTemplateId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -105,18 +108,33 @@ function App() {
   const [activeTemplate, setActiveTemplate] =
     useState<SavedTemplate | null>(null);
   const [currentView, setCurrentView] = useState<
-    "overview" | "professor-panel" | "student-panel"
+    "overview" | "professor-panel" | "student-panel" | "settings"
   >(
     "overview"
   );
   const [showTemplateForm, setShowTemplateForm] = useState(false);
-  const [dashboardImportError, setDashboardImportError] = useState("");
+  const [showTemplateSourceChoice, setShowTemplateSourceChoice] = useState(false);
   const [language, setLanguage] = useState<Language>(() => {
     return localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
   });
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
   });
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [studentSearchRequest, setStudentSearchRequest] = useState(0);
+  const [dismissedNotifications, setDismissedNotifications] = useState<string[]>(
+    () => {
+      try {
+        const saved = localStorage.getItem(DISMISSED_NOTIFICATIONS_KEY);
+        const parsed: unknown = saved ? JSON.parse(saved) : [];
+        return Array.isArray(parsed)
+          ? parsed.filter((value): value is string => typeof value === "string")
+          : [];
+      } catch {
+        return [];
+      }
+    }
+  );
   const t = createTranslator(language);
 
   useEffect(() => {
@@ -136,6 +154,13 @@ function App() {
     localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
 
+  useEffect(() => {
+    localStorage.setItem(
+      DISMISSED_NOTIFICATIONS_KEY,
+      JSON.stringify(dismissedNotifications)
+    );
+  }, [dismissedNotifications]);
+
   const createTemplate = (template: TemplateMetadata) => {
     const newStudent: Student = {
       id: 1,
@@ -143,60 +168,60 @@ function App() {
       grades: Array(template.gradeCount).fill(null),
     };
 
-    setActiveTemplate({
+    const newTemplate: SavedTemplate = {
       ...template,
       id: createTemplateId(),
       gradeWeights: Array(template.gradeCount).fill(
         100 / template.gradeCount
       ),
       students: [newStudent],
-    });
+    };
+
+    setSavedTemplates((currentTemplates) => [
+      ...currentTemplates,
+      newTemplate,
+    ]);
+    setActiveTemplate(null);
     setCurrentView("professor-panel");
     setShowTemplateForm(false);
+  };
+
+  const openTemplateSourceChoice = () => {
+    setShowTemplateSourceChoice(true);
+    setShowTemplateForm(false);
+    setActiveTemplate(null);
+  };
+
+  const createLocalTemplate = () => {
+    setShowTemplateSourceChoice(false);
+    setShowTemplateForm(true);
   };
 
   const importTemplateFromExcel = async (
     event: ChangeEvent<HTMLInputElement>
   ) => {
     const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
+    if (!file) return;
 
     try {
       const workbook = XLSX.read(await file.arrayBuffer());
-      const firstSheetName = workbook.SheetNames[0];
-
-      if (!firstSheetName) {
-        throw new Error(t("importNoWorksheet"));
-      }
-
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-        worksheet
-      );
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = worksheet
+        ? XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet)
+        : [];
       const firstRow = rows[0];
       const gradeHeaders = firstRow
         ? Object.keys(firstRow)
             .filter((header) => /^Grade \d+$/.test(header))
-            .sort(
-              (firstHeader, secondHeader) =>
-                Number(firstHeader.replace("Grade ", "")) -
-                Number(secondHeader.replace("Grade ", ""))
-            )
+            .sort((a, b) => Number(a.replace("Grade ", "")) - Number(b.replace("Grade ", "")))
         : [];
 
-      if (gradeHeaders.length === 0) {
-        throw new Error(t("importNoGradeColumns"));
-      }
-
-      if (gradeHeaders.length > 10) {
-        throw new Error(t("importTooManyGradeColumns"));
+      if (!gradeHeaders.length || gradeHeaders.length > 10) {
+        throw new Error(t("importInvalidGrade"));
       }
 
       const students: Student[] = rows
-        .filter((row) => String(row.Student ?? "").trim() !== "")
+        .filter((row) => String(row.Student ?? "").trim())
         .map((row, index) => ({
           id: index + 1,
           name: String(row.Student).trim(),
@@ -208,40 +233,29 @@ function App() {
           }),
         }));
 
-      if (students.length === 0) {
-        throw new Error(t("importNoStudents"));
-      }
+      if (!students.length) throw new Error(t("importNoStudents"));
 
       const importedTemplate: SavedTemplate = {
         id: createTemplateId(),
         name: file.name.replace(/\.(xlsx|xls)$/i, ""),
         gradingScale: "0-5",
         gradeCount: gradeHeaders.length,
-        gradeWeights: Array(gradeHeaders.length).fill(
-          100 / gradeHeaders.length
-        ),
+        gradeWeights: Array(gradeHeaders.length).fill(100 / gradeHeaders.length),
         students,
       };
 
-      setSavedTemplates((currentTemplates) => [
-        ...currentTemplates,
-        importedTemplate,
-      ]);
-      setActiveTemplate(importedTemplate);
-      setDashboardImportError("");
+      setSavedTemplates((currentTemplates) => [...currentTemplates, importedTemplate]);
+      setShowTemplateSourceChoice(false);
+      setCurrentView("professor-panel");
     } catch (error) {
-      setDashboardImportError(
-        error instanceof Error
-          ? error.message
-          : t("importDashboardError")
-      );
+      window.alert(error instanceof Error ? error.message : t("importError"));
     } finally {
       event.target.value = "";
     }
   };
 
   const navigateTo = (
-    view: "overview" | "professor-panel" | "student-panel"
+    view: "overview" | "professor-panel" | "student-panel" | "settings"
   ) => {
     setCurrentView(view);
     setActiveTemplate(null);
@@ -258,15 +272,61 @@ function App() {
     (total, template) =>
       total +
       template.students.filter((student) => {
+        const hasCompleteGrades =
+          student.grades.length > 0 &&
+          student.grades.every((grade) => grade !== null);
         const average = calculateWeightedAverage(
           student.grades,
           template.gradeWeights
         );
 
-        return getAcademicStatus(average, template.gradingScale) !== "passing";
+        return (
+          hasCompleteGrades &&
+          getAcademicStatus(average, template.gradingScale) === "failing"
+        );
       }).length,
     0
   );
+
+  const strugglingStudents = savedTemplates.flatMap((template) =>
+    template.students.flatMap((student) => {
+      const hasCompleteGrades =
+        student.grades.length > 0 &&
+        student.grades.every((grade) => grade !== null);
+      const average = calculateWeightedAverage(
+        student.grades,
+        template.gradeWeights
+      );
+      const status = getAcademicStatus(average, template.gradingScale);
+
+      if (!hasCompleteGrades || status !== "failing") {
+        return [];
+      }
+
+      return [{
+        id: `${template.id}-${student.id}`,
+        name: student.name,
+        templateName: template.name,
+        average,
+        status,
+      }];
+    })
+  );
+
+  const unreadStrugglingStudents = strugglingStudents.filter(
+    (student) => !dismissedNotifications.includes(student.id)
+  );
+  const failingStudentCount = new Set(
+    strugglingStudents.map((student) => student.name.trim().toLowerCase())
+  ).size;
+
+  const toggleNotification = (notificationId: string) => {
+    setDismissedNotifications((currentNotifications) =>
+      currentNotifications.includes(notificationId)
+        ? currentNotifications.filter((id) => id !== notificationId)
+        : [...currentNotifications, notificationId]
+    );
+  };
 
   const getTemplateAverage = (template: SavedTemplate) => {
     if (template.students.length === 0) {
@@ -283,12 +343,13 @@ function App() {
     return total / template.students.length;
   };
 
-  const formattedDate = new Intl.DateTimeFormat(
-    language === "es" ? "es-CO" : "en-US",
-    { weekday: "long", month: "long", day: "numeric", year: "numeric" }
-  )
-    .format(new Date())
-    .toUpperCase();
+  const currentHour = new Date().getHours();
+  const welcomeMessage =
+    currentHour >= 5 && currentHour < 12
+      ? t("welcomeMorning")
+      : currentHour < 18
+      ? t("welcomeAfternoon")
+      : t("welcomeEvening");
 
   const professorTemplates = savedTemplates;
 
@@ -309,6 +370,8 @@ function App() {
     ? activeTemplate.name
     : currentView === "student-panel"
     ? t("studentPanel")
+    : currentView === "settings"
+    ? t("settings")
     : currentView === "professor-panel"
     ? t("professorPanel")
     : t("overview");
@@ -368,11 +431,30 @@ function App() {
     );
   };
 
+  const updateStudentGradesFromStudentPanel = (
+    templateId: string,
+    studentId: number,
+    grades: (number | null)[]
+  ) => {
+    setSavedTemplates((currentTemplates) =>
+      currentTemplates.map((template) =>
+        template.id === templateId
+          ? {
+              ...template,
+              students: template.students.map((student) =>
+                student.id === studentId ? { ...student, grades } : student
+              ),
+            }
+          : template
+      )
+    );
+  };
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <button className="brand" type="button" onClick={() => navigateTo("overview")}>
-          <span className="brand-mark">▣</span>
+          <span className="brand-mark"><img src={notePutIcon} alt="" /></span>
           <span>Note<span>Put</span></span>
         </button>
 
@@ -383,18 +465,19 @@ function App() {
             type="button"
             onClick={() => navigateTo("overview")}
           >
-            ▦ <span>{t("overview")}</span>
+            <Icon name="dashboard" /> <span>{t("overview")}</span>
           </button>
           <button
             className={!activeTemplate && currentView === "professor-panel" ? "active" : ""}
             type="button"
             onClick={() => navigateTo("professor-panel")}
           >
-            ▤ <span>{t("professorPanel")}</span>
+            <Icon name="template" /> <span>{t("professorPanel")}</span>
             <small>{savedTemplates.length}</small>
           </button>
           <button type="button" onClick={() => navigateTo("student-panel")}>
-            ♙ <span>{t("students")}</span>
+              <Icon name="users" /> <span>{t("studentPanel")}</span>
+              <small>{failingStudentCount}</small>
           </button>
         </nav>
 
@@ -409,9 +492,21 @@ function App() {
                 setCurrentView("professor-panel");
               }}
             >
+              <Icon name="template" size={16} />
               {template.name}
             </button>
           ))}
+        </div>
+
+        <div className="sidebar-bottom">
+          <button
+            className={!activeTemplate && currentView === "settings" ? "active" : ""}
+            type="button"
+            onClick={() => navigateTo("settings")}
+          >
+            <Icon name="settings" />
+            <span>{t("settings")}</span>
+          </button>
         </div>
       </aside>
 
@@ -422,9 +517,41 @@ function App() {
           </div>
 
           <div className="header-actions">
-            <button className="icon-button" type="button" aria-label={t("studentPanel")} onClick={() => navigateTo("student-panel")}>⌕</button>
+            <button className="icon-button" type="button" aria-label={t("searchStudents")} onClick={() => { navigateTo("student-panel"); setStudentSearchRequest((request) => request + 1); }}><Icon name="search" /></button>
+            <div className="notification-control">
+              <button className="icon-button" type="button" aria-label={t("notifications")} onClick={() => setNotificationsOpen((isOpen) => !isOpen)}>
+                <Icon name="bell" />
+                {unreadStrugglingStudents.length > 0 && <span className="notification-count">{unreadStrugglingStudents.length}</span>}
+              </button>
+              {notificationsOpen && (
+                <div className="notification-menu">
+                  <strong>{t("strugglingStudents")}</strong>
+                  {strugglingStudents.length === 0 ? (
+                    <p>{t("noNotifications")}</p>
+                  ) : (
+                    strugglingStudents.map((student) => (
+                      <div className={`notification-item ${dismissedNotifications.includes(student.id) ? "dismissed" : ""}`} key={student.id}>
+                        <label className="notification-check">
+                          <input
+                            type="checkbox"
+                            checked={dismissedNotifications.includes(student.id)}
+                            onChange={() => toggleNotification(student.id)}
+                            aria-label={`${t("markReviewed")} ${student.name}`}
+                          />
+                          <span>
+                            <strong>{student.name}</strong>
+                            <span>{student.templateName}</span>
+                            <small>{t("notificationStatus", { status: t("failing"), average: student.average.toFixed(2) })}</small>
+                          </span>
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {theme === "dark" ? "☀" : "☾"}
+              <Icon name={theme === "dark" ? "sun" : "moon"} />
             </button>
             <label className="language-control">
               <span>{t("language")}</span>
@@ -441,8 +568,44 @@ function App() {
           <StudentPanel
             t={t}
             templates={savedTemplates}
+              onUpdateTeacherStudentGrades={updateStudentGradesFromStudentPanel}
             onDeleteTeacherStudent={deleteStudentFromTemplate}
+            focusSearchRequest={studentSearchRequest}
           />
+        ) : currentView === "settings" ? (
+          <section className="settings-panel panel">
+            <p className="student-directory-eyebrow">{t("settings")}</p>
+            <h1>{t("settingsTitle")}</h1>
+            <p className="settings-description">{t("settingsDescription")}</p>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <Icon name={theme === "dark" ? "moon" : "sun"} />
+                <div>
+                  <strong>{t("appearance")}</strong>
+                  <span>{theme === "dark" ? t("nightMode") : t("lightMode")}</span>
+                </div>
+              </div>
+              <button className="button button-secondary" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
+                {theme === "dark" ? t("lightMode") : t("nightMode")}
+              </button>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <Icon name="file" />
+                <div>
+                  <strong>{t("language")}</strong>
+                  <span>{t("languagePreference")}</span>
+                </div>
+              </div>
+              <select value={language} onChange={(event) => setLanguage(event.target.value as Language)} aria-label={t("language")}>
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+          </section>
         ) : activeTemplate ? (
         <GradeTable
           key={activeTemplate.id}
@@ -472,67 +635,70 @@ function App() {
           </div>
         ) : currentView === "overview" ? (
           <section className="dashboard">
-            <div className="dashboard-heading">
-              <div>
-                <p className="dashboard-date">{formattedDate}</p>
-                <h1>{t("welcome")}</h1>
-                <p>{t("dashboardSubtitle")}</p>
+            <section className="about-noteput-section">
+              <div className="about-noteput-intro">
+                <div>
+                  <p className="about-noteput-eyebrow">{t("aboutNotePut")}</p>
+                  <h2>{t("aboutHeadline")}</h2>
+                  <p>{t("aboutDescription")}</p>
+                </div>
+                <div className="about-noteput-mark" aria-hidden="true">
+                  <img src={notePutIcon} alt="" />
+                </div>
               </div>
-              <div className="dashboard-actions">
-                <label className="button button-secondary dashboard-import-button">
-                  {t("import")}
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={importTemplateFromExcel}
-                  />
-                </label>
-                <button className="button button-primary" type="button" onClick={() => setShowTemplateForm(true)}>
-                  + {t("newTemplate")}
-                </button>
-              </div>
-            </div>
 
-            {dashboardImportError && (
-              <p className="error-message dashboard-import-error">
-                {dashboardImportError}
-              </p>
-            )}
+              <div className="about-noteput-cards">
+                <article className="about-noteput-card">
+                  <p className="about-noteput-eyebrow">{t("ourPurpose")}</p>
+                  <h3>{t("purposeTitle")}</h3>
+                  <p>{t("purposeDescription")}</p>
+                  <p>{t("purposeDescriptionTwo")}</p>
+                </article>
+                <article className="about-noteput-card">
+                  <p className="about-noteput-eyebrow">{t("whatYouCanDo")}</p>
+                  <div className="about-feature-list">
+                    <div><span><Icon name="file" size={20} /></span><p><strong>{t("editableGradeSheets")}</strong>{t("editableGradeSheetsDescription")}</p></div>
+                    <div><span><Icon name="users" size={20} /></span><p><strong>{t("studentProgress")}</strong>{t("studentProgressDescription")}</p></div>
+                    <div><span><Icon name="upload" size={20} /></span><p><strong>{t("excelFriendly")}</strong>{t("excelFriendlyDescription")}</p></div>
+                  </div>
+                </article>
+              </div>
+            </section>
 
             <div className="stats-grid">
               <article className="stat-card">
-                <span className="stat-icon">▤</span>
+                <span className="stat-icon"><Icon name="template" /></span>
                 <div><small>{t("activeTemplates")}</small><strong>{savedTemplates.length}</strong><span>2 {t("editedThisWeek")}</span></div>
               </article>
               <article className="stat-card">
-                <span className="stat-icon">♙</span>
+                <span className="stat-icon"><Icon name="users" /></span>
                 <div><small>{t("totalStudents")}</small><strong>{totalStudents}</strong><span>{t("acrossAllClasses")}</span></div>
               </article>
               <article className="stat-card stat-card-warning">
-                <span className="stat-icon">▣</span>
-                <div><small>{t("needsAttention")}</small><strong>{studentsNeedingAttention}</strong><span>{t("studentsAtRisk")}</span></div>
+                <span className="stat-icon"><Icon name="warning" /></span>
+                <div><small>{t("needsAttention")}</small><strong>{studentsNeedingAttention}</strong><span>{t("studentsFailing")}</span></div>
               </article>
             </div>
 
             <section className="recent-section" id="recent-templates">
               <div className="section-heading">
                 <div><h2>{t("recentTemplates")}</h2><p>{t("pickUpWhereLeftOff")}</p></div>
-                <button className="text-button" type="button" onClick={() => navigateTo("professor-panel")}>{t("viewAllTemplates")} →</button>
+                <button className="text-button" type="button" onClick={() => navigateTo("professor-panel")}>{t("viewAllTemplates")} <Icon name="arrow-right" size={15} /></button>
               </div>
 
               <div className="recent-grid">
                 {savedTemplates.slice(0, 3).map((template) => (
                   <article className="recent-card" key={template.id}>
                     <button type="button" onClick={() => setActiveTemplate(template)}>
-                      <span className="recent-icon">▤</span>
+                      <span className="recent-icon"><Icon name="template" /></span>
                       <strong>{template.name}</strong>
                       <small>{template.students.length} {t("students")} · {getTemplateAverage(template).toFixed(1)} {t("average").toLowerCase()}</small>
                     </button>
                     <button className="template-card-delete" type="button" onClick={() => deleteTemplate(template.id, template.name)}>{t("delete")}</button>
                   </article>
                 ))}
-                <button className="create-card" type="button" onClick={() => setShowTemplateForm(true)}>
-                  <span>＋</span><strong>{t("createBlankTemplate")}</strong><small>{t("startBlankGradeSheet")}</small>
+                <button className="create-card" type="button" onClick={openTemplateSourceChoice}>
+                  <span><Icon name="plus" size={26} /></span><strong>{t("createBlankTemplate")}</strong><small>{t("startBlankGradeSheet")}</small>
                 </button>
               </div>
             </section>
@@ -540,13 +706,13 @@ function App() {
         ) : (
           <ProfessorPanel
             templates={professorTemplates}
+            welcomeMessage={welcomeMessage}
             onOpenTemplate={(template) => {
               setActiveTemplate(template);
               setCurrentView("professor-panel");
             }}
             onCreateTemplate={() => {
-              setShowTemplateForm(true);
-              setActiveTemplate(null);
+              openTemplateSourceChoice();
             }}
             onDeleteTemplate={(template) =>
               deleteTemplate(template.id, template.name)
@@ -556,6 +722,28 @@ function App() {
         )}
         </div>
       </div>
+      {showTemplateSourceChoice && (
+        <div className="template-source-backdrop" role="presentation">
+          <section className="template-source-card" role="dialog" aria-modal="true" aria-labelledby="template-source-title">
+            <button className="template-source-close" type="button" onClick={() => setShowTemplateSourceChoice(false)} aria-label={t("cancel")}>×</button>
+            <p className="student-directory-eyebrow">{t("createTemplate")}</p>
+            <h2 id="template-source-title">{t("chooseTemplateSource")}</h2>
+            <div className="template-source-options">
+              <button type="button" onClick={createLocalTemplate}>
+                <Icon name="template" size={24} />
+                <strong>{t("localTemplate")}</strong>
+                <small>{t("localTemplateDescription")}</small>
+              </button>
+              <label>
+                <Icon name="upload" size={24} />
+                <strong>{t("excelTemplate")}</strong>
+                <small>{t("excelTemplateDescription")}</small>
+                <input type="file" accept=".xlsx,.xls" onChange={importTemplateFromExcel} />
+              </label>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

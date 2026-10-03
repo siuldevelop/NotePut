@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TemplateMetadata } from "../../types/Template";
 import type { Translator } from "../../utils/i18n";
+import Icon from "../Icon/Icon";
 
 interface TemplateFormProps {
   onCreateTemplate: (template: TemplateMetadata) => void;
@@ -36,7 +37,11 @@ function TemplateForm({
 
   return (
     <section className="template-form panel">
+      <div className="template-form-icon" aria-hidden="true">
+        <Icon name="file" size={25} />
+      </div>
       <h2>{t("createTemplate")}</h2>
+      <p className="template-form-subtitle">{t("createTemplateSubtitle")}</p>
 
       <div className="form-field">
         <label htmlFor="templateName">

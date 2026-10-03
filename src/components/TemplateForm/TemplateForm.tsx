@@ -1,17 +1,19 @@
 import { useState } from "react";
-
-interface Template {
-  name: string;
-  gradingScale: string;
-  gradeCount: number;
-}
+import type { TemplateMetadata } from "../../types/Template";
+import type { Translator } from "../../utils/i18n";
 
 interface TemplateFormProps {
-  onCreateTemplate: (template: Template) => void;
+  onCreateTemplate: (template: TemplateMetadata) => void;
+  t: Translator;
+  initialTemplateName?: string;
 }
 
-function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
-  const [templateName, setTemplateName] = useState("Template 01");
+function TemplateForm({
+  onCreateTemplate,
+  t,
+  initialTemplateName = "Template 01",
+}: TemplateFormProps) {
+  const [templateName, setTemplateName] = useState(initialTemplateName);
   const [gradingScale, setGradingScale] = useState("0-5");
 
   const [gradeCount, setGradeCount] = useState(5);
@@ -23,7 +25,7 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
       return;
     }
 
-    const template: Template = {
+    const template: TemplateMetadata = {
       name: templateName,
       gradingScale,
       gradeCount,
@@ -33,12 +35,12 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
   };
 
   return (
-    <section>
-      <h2>Create a template</h2>
+    <section className="template-form panel">
+      <h2>{t("createTemplate")}</h2>
 
-      <div>
+      <div className="form-field">
         <label htmlFor="templateName">
-          Template name
+          {t("templateName")}
         </label>
 
         <input
@@ -49,9 +51,9 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
         />
       </div>
 
-      <div>
+      <div className="form-field">
         <label htmlFor="gradingScale">
-          Grading scale
+          {t("gradingScale")}
         </label>
 
         <select
@@ -65,9 +67,9 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
         </select>
       </div>
 
-      <div>
+      <div className="form-field">
         <label htmlFor="gradeCount">
-          Number of grades
+          {t("numberOfGrades")}
         </label>
 
         <input
@@ -86,7 +88,7 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
               value === "-" ||
               Number.isNaN(numberValue) ||
               numberValue < 1 ||
-              numberValue > 5;
+              numberValue > 10;
 
             setGradeCountError(isInvalid);
 
@@ -97,19 +99,19 @@ function TemplateForm({ onCreateTemplate }: TemplateFormProps) {
           style={{
             border: gradeCountError
               ? "2px solid red"
-              : "1px solid black",
+              : undefined,
           }}
         />
 
         {gradeCountError && (
           <p style={{ color: "red" }}>
-            Number of grades must be between 1 and 5.
+            {t("gradeCountError")}
           </p>
         )}
       </div>
 
       <button type="button" onClick={handleCreateTemplate}>
-        Create template
+        {t("create")}
       </button>
     </section>
   );

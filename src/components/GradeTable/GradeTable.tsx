@@ -1,71 +1,68 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import * as XLSX from "xlsx";
 import type { Student } from "../../types/Student";
+import type { SavedTemplate } from "../../types/Template";
+import {
+  calculateWeightedAverage,
+  getAcademicStatus,
+  isGradeValid,
+} from "../../utils/gradeCalculations";
+import type { Translator } from "../../utils/i18n";
 
 interface GradeTableProps {
+  templateId: string;
   templateName: string;
   gradingScale: string;
   gradeCount: number;
+  initialGradeWeights: number[];
+  initialStudents: Student[];
+  initialShowAttendance?: boolean;
+  initialAttendance?: Record<string, boolean>;
+  onSaveTemplate: (template: SavedTemplate) => void;
+  t: Translator;
+  onBackToTemplate: (template: SavedTemplate) => void;
 }
 
 function GradeTable({
+  templateId,
   templateName,
   gradingScale,
   gradeCount,
+  initialGradeWeights,
+  initialStudents,
+  initialShowAttendance = false,
+  initialAttendance = {},
+  onSaveTemplate,
+  t,
+  onBackToTemplate,
 }: GradeTableProps) {
   const [gradeWeights, setGradeWeights] = useState<number[]>(
-    Array(gradeCount).fill(100 / gradeCount)
+    initialGradeWeights
   );
   
-  const [students, setStudents] = useState<Student[]>([
-    {
-      id: 1,
-      name: "Juan Pérez",
-      grades: Array(gradeCount).fill(null),
-    },
-  ]);
+  const [students, setStudents] = useState<Student[]>(initialStudents);
 
-  const calculateAverage = (
-    grades: (number | null)[],
-    weights: number[]
-  ) => {
-    let total = 0;
-
-    grades.forEach((grade, index) => {
-      if (grade !== null) {
-        total += grade * (weights[index] / 100);
-      }
-    });
-
-    return total;
-  };
-
-  const getStudentStatus = (average: number) => {
-    if (gradingScale === "0-5") {
-      if (average >= 3.5) return "passing";
-      if (average >= 3.0) return "at-risk";
-      return "failing";
-    }
-
-    if (gradingScale === "0-100") {
-      if (average >= 70) return "passing";
-      if (average >= 60) return "at-risk";
-      return "failing";
-    }
-
-    if (gradingScale === "0-1") {
-      if (average >= 0.7) return "passing";
-      if (average >= 0.6) return "at-risk";
-      return "failing";
-    }
-
-    return "failing";
-  };
+  const [importError, setImportError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [showAttendance, setShowAttendance] = useState(
+    initialShowAttendance
+  );
+  const [attendance, setAttendance] = useState<Record<string, boolean>>(
+    initialAttendance
+  );
+  const [studentFilter, setStudentFilter] = useState<
+    "all" | "passing" | "at-risk" | "failing"
+  >( "all");
 
   const addStudent = () => {
+  const nextStudentId = students.reduce(
+    (highestId, student) => Math.max(highestId, student.id),
+    0
+  ) + 1;
+
   const newStudent: Student = {
-    id: students.length + 1,
-    name: `Student ${students.length + 1}`,
+    id: nextStudentId,
+    name: `Student ${nextStudentId}`,
     grades: Array(gradeCount).fill(0),
   };
 
@@ -75,7 +72,25 @@ function GradeTable({
     ]);
   };
 
+  const removeStudent = (studentId: number, studentName: string) => {
+    const shouldRemove = window.confirm(
+      t("removeStudentConfirm", { name: studentName })
+    );
+
+    if (!shouldRemove) {
+      return;
+    }
+
+    setStudents((currentStudents) =>
+      currentStudents.filter((student) => student.id !== studentId)
+    );
+  };
+
   const exportToExcel = () => {
+    if (!isWeightTotalValid || hasInvalidWeight) {
+      return;
+    }
+
     const data = students.map((student) => {
       const row: Record<string, string | number> = {
         Student: student.name,
@@ -85,7 +100,7 @@ function GradeTable({
         row[`Grade ${index + 1}`] = grade ?? "";
       });
 
-      row.Average = calculateAverage(
+      row.Average = calculateWeightedAverage(
         student.grades,
         gradeWeights
       );
@@ -113,6 +128,188 @@ function GradeTable({
     0
   );
 
+  const hasInvalidWeight = gradeWeights.some(
+    (weight) => Number.isNaN(weight) || weight < 0 || weight > 100
+  );
+
+  const isWeightTotalValid =
+    !hasInvalidWeight && Math.abs(totalWeight - 100) < 0.01;
+
+  const updateWeight = (index: number, value: string) => {
+    const newWeights = [...gradeWeights];
+    newWeights[index] = value === "" ? 0 : Number(value);
+    setGradeWeights(newWeights);
+  };
+
+  const importFromExcel = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const shouldImport = window.confirm(
+      t("importConfirm")
+    );
+
+    if (!shouldImport) {
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer());
+      const firstSheetName = workbook.SheetNames[0];
+
+      if (!firstSheetName) {
+        throw new Error(t("importNoWorksheet"));
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+        worksheet
+      );
+
+      const importedStudents: Student[] = [];
+
+      rows.forEach((row, rowIndex) => {
+        const isEmptyRow = Object.values(row).every(
+          (value) =>
+            value === undefined ||
+            value === null ||
+            String(value).trim() === ""
+        );
+
+        if (isEmptyRow) {
+          return;
+        }
+
+        const studentName = String(row.Student ?? "").trim();
+
+        if (!studentName) {
+          throw new Error(
+            t("importMissingName", { row: rowIndex + 2 })
+          );
+        }
+
+        const grades = Array.from(
+          { length: gradeCount },
+          (_, gradeIndex) => {
+            const rawGrade = row[`Grade ${gradeIndex + 1}`];
+
+            if (
+              rawGrade === undefined ||
+              rawGrade === null ||
+              String(rawGrade).trim() === ""
+            ) {
+              return null;
+            }
+
+            const grade = Number(rawGrade);
+            const isInvalidGrade =
+              Number.isNaN(grade) ||
+              grade < 0 ||
+              (gradingScale === "0-5" && grade > 5) ||
+              (gradingScale === "0-100" && grade > 100) ||
+              (gradingScale === "0-1" && grade > 1);
+
+            if (isInvalidGrade) {
+              throw new Error(
+                t("importInvalidGrade", { row: rowIndex + 2 })
+              );
+            }
+
+            return grade;
+          }
+        );
+
+        importedStudents.push({
+          id: importedStudents.length + 1,
+          name: studentName,
+          grades,
+        });
+      });
+
+      if (importedStudents.length === 0) {
+        throw new Error(t("importNoStudents"));
+      }
+
+      setStudents(importedStudents);
+      setImportError("");
+    } catch (error) {
+      setImportError(
+        error instanceof Error
+          ? error.message
+          : t("importError")
+      );
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const getCurrentTemplate = useCallback(
+    (): SavedTemplate => ({
+      id: templateId,
+      name: templateName,
+      gradingScale,
+      gradeCount,
+      gradeWeights,
+      students,
+      showAttendance,
+      attendance,
+    }),
+    [
+      attendance,
+      gradeWeights,
+      gradeCount,
+      showAttendance,
+      students,
+      templateId,
+      templateName,
+      gradingScale,
+    ]
+  );
+
+  useEffect(() => {
+    onSaveTemplate(getCurrentTemplate());
+  }, [
+    attendance,
+    getCurrentTemplate,
+    onSaveTemplate,
+  ]);
+
+  const saveTemplateLocally = () => {
+    const templateToSave = getCurrentTemplate();
+    onSaveTemplate(templateToSave);
+    setSaveMessage(t("saved"));
+  };
+
+  const getStatusLabel = (status: string) => {
+    if (status === "passing") return t("satisfactory");
+    if (status === "at-risk") return t("atRisk");
+    return t("insufficient");
+  };
+
+  const studentStatuses = students.map((student) => ({
+    student,
+    status: getAcademicStatus(
+      calculateWeightedAverage(student.grades, gradeWeights),
+      gradingScale
+    ),
+  }));
+
+  const filteredStudents = studentStatuses
+    .filter(({ status }) => studentFilter === "all" || status === studentFilter)
+    .map(({ student }) => student);
+
+  const statusCounts = {
+    passing: studentStatuses.filter(({ status }) => status === "passing").length,
+    atRisk: studentStatuses.filter(({ status }) => status === "at-risk").length,
+    failing: studentStatuses.filter(({ status }) => status === "failing").length,
+  };
+
   const updateGrade = (
     studentId: number,
     gradeIndex: number,
@@ -137,49 +334,90 @@ function GradeTable({
   };
 
   return (
-    <section>
-      <h2>{templateName}</h2>
+    <section className="grade-table-section panel">
+      <div className="grade-sheet-heading">
+        <div>
+          <h2>{templateName}</h2>
+          <p>{t("editableGradeSheet")} · {t("lastSaved")}</p>
+        </div>
 
-      <div>
-        <span>🟢 Passing</span>{" "}
-        <span>🟡 At risk</span>{" "}
-        <span>🔴 Failing</span>
+        <div className="grade-sheet-actions">
+          <button className="button button-secondary" type="button" onClick={() => onBackToTemplate(getCurrentTemplate())}>
+            {t("back")}
+          </button>
+          <button className="button button-secondary" type="button" onClick={() => setShowAttendance(!showAttendance)}>
+            {showAttendance ? t("attendance") : t("addAttendance")}
+          </button>
+          <button className="button button-secondary" type="button" onClick={exportToExcel} disabled={!isWeightTotalValid || hasInvalidWeight}>
+            {t("export")}
+          </button>
+          <button className="button button-primary" type="button" onClick={saveTemplateLocally}>
+            {t("saveChanges")}
+          </button>
+        </div>
       </div>
 
-      <button type="button" onClick={exportToExcel}>
-        Export to Excel
-      </button>
+      <div className="grade-sheet-toolbar">
+        <div className="student-filters" role="tablist" aria-label={t("student")}>
+          <button className={studentFilter === "all" ? "active" : ""} type="button" onClick={() => setStudentFilter("all")}>
+            {t("allStudents")}
+          </button>
+          <button className={studentFilter === "passing" ? "active" : ""} type="button" onClick={() => setStudentFilter("passing")}>
+            {t("satisfactory")} <span>{statusCounts.passing}</span>
+          </button>
+          <button className={studentFilter === "at-risk" ? "active" : ""} type="button" onClick={() => setStudentFilter("at-risk")}>
+            {t("atRisk")} <span>{statusCounts.atRisk}</span>
+          </button>
+          <button className={studentFilter === "failing" ? "active" : ""} type="button" onClick={() => setStudentFilter("failing")}>
+            {t("insufficient")} <span>{statusCounts.failing}</span>
+          </button>
+        </div>
 
-      <button type="button" onClick={addStudent}>
-        + Add student
-      </button>
+        <div className="import-control">
+          <label htmlFor="excelImport">{t("import")}</label>
+          <input id="excelImport" type="file" accept=".xlsx,.xls" onChange={importFromExcel} />
+        </div>
+      </div>
 
-      <table>
+      {saveMessage && <p className="success-message">{saveMessage}</p>}
+
+      {importError && (
+        <p className="error-message">
+          {importError}
+        </p>
+      )}
+
+      <div className="table-wrapper">
+      <table className="grade-table">
       <thead>
         <tr>
-          <th>Student</th>
+          <th>{t("student")}</th>
 
           {Array.from({ length: gradeCount }, (_, index) => (
             <th key={index}>
               <div>
-                <div>Grade {index + 1}</div>
+                <div>{t("grade", { number: index + 1 })}</div>
 
                 <input
                   type="number"
+                  className="weight-input"
                   min="0"
                   max="100"
+                  step="0.01"
                   value={
                     gradeWeights[index] === 0
                       ? ""
                       : gradeWeights[index]
                   }
                   onFocus={(event) => event.target.select()}
-                  onChange={(event) => {
-                    const newWeights = [...gradeWeights];
-
-                    newWeights[index] = Number(event.target.value);
-
-                    setGradeWeights(newWeights);
+                  onChange={(event) =>
+                    updateWeight(index, event.target.value)
+                  }
+                  style={{
+                    border: gradeWeights[index] < 0 ||
+                      gradeWeights[index] > 100
+                      ? "2px solid red"
+                      : "1px solid black",
                   }}
                 />
 
@@ -188,37 +426,48 @@ function GradeTable({
             </th>
           ))}
 
-          <th>Average</th>
+          <th>{t("average")}</th>
+          <th>{t("status")}</th>
+          {showAttendance && <th>{t("attendance")}</th>}
         </tr>
 
         <tr>
         <th
-          colSpan={gradeCount + 2}
+          colSpan={gradeCount + 3 + (showAttendance ? 1 : 0)}
           style={{
-            color: totalWeight === 100 ? "green" : "red",
+            color: isWeightTotalValid ? "green" : "red",
           }}
         >
-          Total weight: {totalWeight}%
+          {t("totalWeight", { weight: totalWeight })}
         </th>
 
         </tr>
+
+        {!isWeightTotalValid && (
+          <tr>
+            <th colSpan={gradeCount + 3 + (showAttendance ? 1 : 0)} style={{ color: "red" }}>
+              {t("weightError")}
+            </th>
+          </tr>
+        )}
       </thead>
 
         <tbody>
-          {students.map((student) => {
+          {filteredStudents.map((student) => {
 
-            const average = calculateAverage(
+            const average = calculateWeightedAverage(
               student.grades,
               gradeWeights
             );
 
-            const status = getStudentStatus(average);
+            const status = getAcademicStatus(average, gradingScale);
 
             return (
               <tr key={student.id}>
                 <td>
 
                   <input
+                    className="student-name-input"
                     type="text"
                     value={student.name}
                     onChange={(event) => {
@@ -236,26 +485,34 @@ function GradeTable({
                     style={{
                       backgroundColor:
                         status === "passing"
-                          ? "#d4edda"
+                          ? "#15803d"
                           : status === "at-risk"
-                          ? "#fff3cd"
-                          : "#f8d7da",
+                          ? "#a16207"
+                          : "#b91c1c",
+                      color: "#ffffff",
                     }}
                   />
+
+                  <button
+                    className="button button-danger"
+                    type="button"
+                    onClick={() =>
+                      removeStudent(student.id, student.name)
+                    }
+                  >
+                    {t("delete")}
+                  </button>
                 </td>
 
                 {student.grades.map((grade, index) => {
-                  const isInvalidGrade =
-                    grade !== null &&
-                    (
-                      grade < 0 ||
-                      (gradingScale === "0-5" && grade > 5) ||
-                      (gradingScale === "0-100" && grade > 100) ||
-                      (gradingScale === "0-1" && grade > 1)
-                    );
+                  const isInvalidGrade = !isGradeValid(
+                    grade,
+                    gradingScale
+                  );
                   return (
                     <td key={index}>
                     <input
+                      className="grade-input"
                       type="number"
                       value={grade ?? ""}
                       onFocus={(event) => event.target.select()}
@@ -283,19 +540,54 @@ function GradeTable({
 
                       {isInvalidGrade && (
                         <small style={{ color: "#8f4a4a" }}>
-                          Invalid grade
+                          {t("invalidGrade")}
                         </small>
                       )}
                     </td>
                   );
                 })}
 
-                <td>{average.toFixed(2)}</td>
+                <td className="average-cell">{average.toFixed(2)}</td>
+                <td>
+                  <span className={`status-pill status-${status}`}>
+                    {getStatusLabel(status)}
+                  </span>
+                </td>
+                {showAttendance && (
+                  <td>
+                    <label className="attendance-control">
+                      <input
+                        type="checkbox"
+                        checked={attendance[String(student.id)] ?? false}
+                        onChange={(event) =>
+                          setAttendance((currentAttendance) => ({
+                            ...currentAttendance,
+                            [student.id]: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>{t("present")}</span>
+                    </label>
+                  </td>
+                )}
               </tr>
             );
           })}
         </tbody>
       </table>
+      </div>
+
+      <div className="grade-sheet-footer">
+        <span>
+          {t("showingStudents", {
+            shown: filteredStudents.length,
+            total: students.length,
+          })}
+        </span>
+        <button className="button button-secondary" type="button" onClick={addStudent}>
+          {t("addStudent")}
+        </button>
+      </div>
     </section>
   );
 }
